@@ -565,26 +565,27 @@ if (buf == NULL || *buf == NULL) {
 
 ByteBuffer *buffer_clone(const ByteBuffer *src)
 {
-    // TODO
-    (void)src;
-    return NULL;
+  
+    if (src == NULL) {
+        return NULL;
+    }
+
+
+    ByteBuffer *dest = buffer_create(src->capacity);
+    if (dest == NULL) {
+        return NULL;
+    }
+
+   
+    dest->size = src->size;
+
+    
+    if (dest->size > 0 && src->data != NULL) {
+        memcpy(dest->data, src->data, src->size);
+    }
+
+    return dest;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -601,10 +602,27 @@ ByteBuffer *buffer_clone(const ByteBuffer *src)
 
 ByteBuffer *buffer_concat(const ByteBuffer *a, const ByteBuffer *b)
 {
-    // TODO
-    (void)a;
-    (void)b;
-    return NULL;
+  
+    if (a == NULL || b == NULL) {
+        return NULL;
+    }
+
+  
+    size_t required_capacity = a->size + b->size;
+    if (required_capacity == 0) {
+        required_capacity = 1;
+    }
+
+    ByteBuffer *dest = buffer_create(required_capacity);
+    if (dest == NULL) {
+        return NULL;
+    }
+
+ 
+    buffer_append(dest, a->data, a->size);
+    buffer_append(dest, b->data, b->size);
+
+    return dest;
 }
 
 /*
@@ -617,10 +635,33 @@ ByteBuffer *buffer_concat(const ByteBuffer *a, const ByteBuffer *b)
 
 size_t buffer_count(const ByteBuffer *buf, unsigned char byte)
 {
-    // TODO
-    (void)buf;
-    (void)byte;
-    return 0;
+   // Return 0 if the buffer pointer is NULL or if it contains no elements
+    if (buf == NULL || buf->data == NULL || buf->size == 0) {
+        return 0;
+    }
+
+    size_t count = 0;
+    const unsigned char *current_ptr = buf->data;
+    size_t remaining_bytes = buf->size;
+
+    
+    while (remaining_bytes > 0) {
+        const unsigned char *hit = memchr(current_ptr, byte, remaining_bytes);
+        
+     
+        if (hit == NULL) {
+            break;
+        }
+
+        count++;
+        
+
+        size_t bytes_passed = (hit - current_ptr) + 1;
+        current_ptr += bytes_passed;
+        remaining_bytes -= bytes_passed;
+    }
+
+    return count;
 }
 
 /*
@@ -635,9 +676,32 @@ size_t buffer_count(const ByteBuffer *buf, unsigned char byte)
 
 bool buffer_shrink_to_fit(ByteBuffer *buf)
 {
-    // TODO
-    (void)buf;
-    return false;
+ 
+    if (buf == NULL) {
+        return false;
+    }
+
+
+    size_t target_capacity = buf->size;
+    if (target_capacity == 0) {
+        target_capacity = 1;
+    }
+
+ 
+    if (buf->capacity == target_capacity) {
+        return true;
+    }
+
+    unsigned char *temp = realloc(buf->data, target_capacity * sizeof(unsigned char));
+
+    if (temp == NULL) {
+        return false;
+    }
+
+    buf->data = temp;
+    buf->capacity = target_capacity;
+
+    return true;
 }
 
 /*
@@ -663,10 +727,87 @@ bool buffer_shrink_to_fit(ByteBuffer *buf)
 
 char **buffer_split(const ByteBuffer *buf, unsigned char delim, size_t *out_count)
 {
-    // TODO
-    (void)buf;
-    (void)delim;
-    (void)out_count;
+// Validate required output pointer
+    if (out_count == NULL) {
+        return NULL;
+    }
+    *out_count = 0;
+
+    // Validate buffer pointer
+    if (buf == NULL) {
+        return NULL;
+    }
+
+    // Initialize dynamic array allocation tracking
+    size_t array_capacity = 4;
+    char **tokens = malloc(array_capacity * sizeof(char *));
+    if (tokens == NULL) {
+        return NULL;
+    }
+
+    size_t token_count = 0;
+    const unsigned char *current_ptr = buf->data;
+    size_t remaining_bytes = buf->size;
+
+    // Outer loop runs at least once to handle an empty buffer/trailing delimiter
+    // It breaks internally when there are no more remaining bytes after processing a token
+    while (1) {
+        // Find the next delimiter within the remaining slice
+        const unsigned char *hit = NULL;
+        if (remaining_bytes > 0 && current_ptr != NULL) {
+            hit = memchr(current_ptr, delim, remaining_bytes);
+        }
+
+        // Calculate length of the current token segment
+        size_t token_len = (hit != NULL) ? (size_t)(hit - current_ptr) : remaining_bytes;
+
+        // Double array capacity if we hit our pointer limit
+        if (token_count >= array_capacity) {
+            size_t new_capacity = array_capacity * 2;
+            char **temp_tokens = realloc(tokens, new_capacity * sizeof(char *));
+            if (temp_tokens == NULL) {
+                goto cleanup_failure;
+            }
+            tokens = temp_tokens;
+            array_capacity = new_capacity;
+        }
+
+        // Allocate the string copy including the null terminator
+        tokens[token_count] = malloc((token_len + 1) * sizeof(char));
+        if (tokens[token_count] == NULL) {
+            goto cleanup_failure;
+        }
+
+        // Copy content if available and null-terminate
+        if (token_len > 0 && current_ptr != NULL) {
+            memcpy(tokens[token_count], current_ptr, token_len);
+        }
+        tokens[token_count][token_len] = '\0';
+        token_count++;
+
+        // Shift pointers forward past the delimiter if one was hit
+        if (hit != NULL) {
+            size_t bytes_consumed = token_len + 1;
+            current_ptr += bytes_consumed;
+            remaining_bytes -= bytes_consumed;
+        } else {
+            // No more delimiters left; we just processed the final token
+            break;
+        }
+    }
+
+    *out_count = token_count;
+    return tokens;
+
+cleanup_failure:
+    // If any allocation fails, release all strings and the array shell
+    if (tokens != NULL) {
+        for (size_t i = 0; i < token_count; i++) {
+            free(tokens[i]);
+        }
+        free(tokens);
+    }
+    *out_count = 0;
     return NULL;
 }
 
@@ -681,7 +822,22 @@ char **buffer_split(const ByteBuffer *buf, unsigned char delim, size_t *out_coun
 
 void free_tokens(char ***tokens, size_t count)
 {
-    // TODO
-    (void)tokens;
-    (void)count;
+ // Do nothing if the pointer to the array or the array itself is NULL
+    if (tokens == NULL || *tokens == NULL) {
+        return;
+    }
+
+    // Free every individual token string
+    for (size_t i = 0; i < count; i++) {
+        // Double-check pointer just in case a token was partially allocated or already freed
+        if ((*tokens)[i] != NULL) {
+            free((*tokens)[i]);
+        }
+    }
+
+    // Free the main array shell
+    free(*tokens);
+
+    // Set the pointer to NULL so subsequent calls are harmless
+    *tokens = NULL;
 }
